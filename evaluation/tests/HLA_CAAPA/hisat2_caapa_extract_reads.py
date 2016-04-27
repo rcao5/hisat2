@@ -29,7 +29,7 @@ from argparse import ArgumentParser, FileType
 
 """
 """
-def parallel_work(pids, work, cmd):
+def parallel_work(pids, work, cmd, done_fname):
     child = -1
     for i in range(len(pids)):
         if pids[i] == 0:
@@ -46,7 +46,7 @@ def parallel_work(pids, work, cmd):
 
     child_id = os.fork()
     if child_id == 0:
-        work(cmd)
+        work(cmd, done_fname)
         os._exit(os.EX_OK)
     else:
         # print >> sys.stderr, '\t\t>> thread %d: %d' % (child, child_id)
@@ -66,6 +66,7 @@ def wait_pids(pids):
 def test_HLA_genotyping(reference_type,
                         hla_list,
                         partial,
+                        read_dir,
                         threads,
                         verbose):
     # Current script directory
@@ -134,40 +135,50 @@ def test_HLA_genotyping(reference_type,
             print >> sys.stderr, "Error: indexing HLA failed!  Perhaps, you may have forgotten to build hisat2 executables?"
             sys.exit(1)
 
+    if not os.path.exists("CAAPA"):
+        os.system("mkdir CAAPA")
+
     # Extract reads
-    fq_fnames = glob.glob("*_1.fq.gz")
+    converted_fnames = glob.glob("%s/*.converted" % read_dir)
     count = 0
     pids = [0 for i in range(threads)]
-    for fq_fname in fq_fnames:
-        fq_fname_base = fq_fname.split('.')[0][:-2]
-        fq_fname2 = "%s_2.fq.gz" % fq_fname_base
+    for converted_fname in converted_fnames:
+        converted_fname = converted_fname.split('/')[-1]
+        fq_fname_base = converted_fname.split('.')[0]
+
+        done_fname = "%s.done" % fq_fname_base
+        if os.path.exists("CAAPA/%s" % done_fname):
+            continue
+
+        fq_fname = "%s/%s.1.fq.gz" % (read_dir, fq_fname_base)
+        fq_fname2 = "%s/%s.2.fq.gz" % (read_dir, fq_fname_base)
         if not os.path.exists(fq_fname2):
             print >> sys.stderr, "%s does not exist." % fq_fname2
             continue
-        if os.path.exists("%s.extracted.fq.1.gz" % fq_fname_base):
-            continue        
         count += 1
 
         print >> sys.stderr, "\t%d: Extracting reads from %s" % (count, fq_fname_base)
         hisat2 = os.path.join(ex_path, "hisat2")
         aligner_cmd = [hisat2,
-                       "--al-conc-disc-gz", "%s.extracted.fq.gz" % fq_fname_base,
+                       "--al-conc-disc-gz", "CAAPA/%s.extracted.fq.gz" % fq_fname_base,
                        "--mm",
+                       "--no-spliced-alignment",
                        "-x", "hla.graph",
                        "-1", fq_fname,
                        "-2", fq_fname2]
         print >> sys.stderr, "\t\trunning", ' '.join(aligner_cmd)            
             
-        def work(aligner_cmd):
+        def work(aligner_cmd, done_fname):
             align_proc = subprocess.Popen(aligner_cmd,
                                           stdout=open("/dev/null", 'w'),
                                           stderr=open("/dev/null", 'w'))
             align_proc.communicate()
+            os.system("touch CAAPA/%s" % done_fname)
 
         if threads <= 1:
-            work(aligner_cmd)
+            work(aligner_cmd, done_fname)
         else:
-            parallel_work(pids, work, aligner_cmd)
+            parallel_work(pids, work, aligner_cmd, done_fname)
 
     if threads > 1:
         wait_pids(pids)
@@ -192,6 +203,11 @@ if __name__ == '__main__':
                         dest='partial',
                         action='store_true',
                         help='Include partial alleles (e.g. A_nuc.fasta)')
+    parser.add_argument('--read-dir',
+                        dest='read_dir',
+                        type=str,
+                        default="/work-zfs/ssalzbe1/CAAPA",
+                        help='Directory where reads are located')    
     parser.add_argument("-p", "--threads",
                         dest="threads",
                         type=int,
@@ -211,5 +227,6 @@ if __name__ == '__main__':
     test_HLA_genotyping(args.reference_type,
                         args.hla_list,
                         args.partial,
+                        args.read_dir,
                         args.threads,
                         args.verbose)

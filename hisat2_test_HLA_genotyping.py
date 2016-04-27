@@ -36,10 +36,12 @@ def test_HLA_genotyping(reference_type,
                         alignment_fname,
                         threads,
                         simulate_interval,
+                        sample,
                         enable_coverage,
                         best_alleles,
                         exclude_allele_list,
                         num_mismatch,
+                        pair_model,
                         verbose,
                         daehwan_debug):
     # Current script directory
@@ -386,7 +388,8 @@ def test_HLA_genotyping(reference_type,
                     hisat2 = os.path.join(ex_path, "hisat2")
                     aligner_cmd = [hisat2,
                                    "--no-unal",
-                                   "--mm"]
+                                   "--mm",
+                                   "--sample", str(sample)]
                     if index_type == "linear":
                         aligner_cmd += ["-k", "10"]
                     aligner_cmd += ["-x", "hla.%s" % index_type]
@@ -394,6 +397,7 @@ def test_HLA_genotyping(reference_type,
                     aligner_cmd = [aligner,
                                    "--no-unal",
                                    "-k", "10",
+                                   "--sample", sample,
                                    "-x", "hla"]
                 else:
                     assert False
@@ -421,16 +425,32 @@ def test_HLA_genotyping(reference_type,
                               "view",
                               "-bS",
                               "-"]
+
                 sambam_proc = subprocess.Popen(sambam_cmd,
                                                stdin=align_proc.stdout,
                                                stdout=open("hla_input_unsorted.bam", 'w'),
                                                stderr=open("/dev/null", 'w'))
+
                 sambam_proc.communicate()
                 if index_type == "graph":
-                    bamsort_cmd = ["samtools",
-                                   "sort",
-                                   "hla_input_unsorted.bam",
-                                   "hla_input"]
+                    samver_cmd = ["samtools", "--version"]
+                    samver_proc = subprocess.Popen(samver_cmd,
+                                                   stdout=subprocess.PIPE)
+                    sam_version = samver_proc.stdout.readline()
+                    samver_proc.communicate()
+                    sam_version = sam_version.strip().split()[1]
+                    if sam_version.startswith("1"):
+                        bamsort_cmd = ["samtools",
+                                       "sort",
+                                       "hla_input_unsorted.bam",
+                                       "-o", "hla_input.bam"]
+                    else:
+                        assert sam_version.startswith("0")
+                        bamsort_cmd = ["samtools",
+                                       "sort",
+                                       "hla_input_unsorted.bam",
+                                       "hla_input"]
+
                     bamsort_proc = subprocess.Popen(bamsort_cmd,
                                                     stderr=open("/dev/null", 'w'))
                     bamsort_proc.communicate()
@@ -577,7 +597,11 @@ def test_HLA_genotyping(reference_type,
                                     read_base = read_seq[read_pos + MD_len]
                                     MD_ref_base = MD[MD_str_pos]
                                     MD_str_pos += 1
-                                    assert MD_ref_base in "ACGT"
+                                    # daehwan - for debugging purposes
+                                    if not MD_ref_base in "ACGT":
+                                        print left_pos, cigar_str
+                                        print MD_ref_base, MD, MD_str_pos
+                                    # assert MD_ref_base in "ACGT"
                                     cmp_list.append(["match", right_pos + MD_len_used, MD_len - MD_len_used])
                                     cmp_list.append(["mismatch", right_pos + MD_len, 1])
                                     MD_len_used = MD_len + 1
@@ -983,19 +1007,19 @@ def test_HLA_genotyping(reference_type,
                         found = False
                         for test_HLA_name in test_HLA_names:
                             if count[0] == test_HLA_name:
-                                print >> sys.stderr, "\t\t\t*** %d ranked %s (count: %d)" % (count_i + 1, test_HLA_name, count[1])
+                                print >> sys.stderr, "\t\t\t*** %d ranked %s (count:%d)" % (count_i + 1, test_HLA_name, count[1])
                                 found = True
                                 """
                                 if count_i > 0 and HLA_counts[0][1] > count[1]:
-                                    print >> sys.stderr, "Warning: %s ranked first (count: %d)" % (HLA_counts[0][0], HLA_counts[0][1])
+                                    print >> sys.stderr, "Warning: %s ranked first (count:%d)" % (HLA_counts[0][0], HLA_counts[0][1])
                                     assert False
                                 else:
                                     test_passed += 1
                                 """
                         if count_i < 5 and not found:
-                            print >> sys.stderr, "\t\t\t\t%d %s (count: %d)" % (count_i + 1, count[0], count[1])
+                            print >> sys.stderr, "\t\t\t\t%d %s (count:%d)" % (count_i + 1, count[0], count[1])
                     else:
-                        print >> sys.stderr, "\t\t\t\t%d %s (count: %d)" % (count_i + 1, count[0], count[1])
+                        print >> sys.stderr, "\t\t\t\t%d %s (count:%d)" % (count_i + 1, count[0], count[1])
                         if count_i >= 9:
                             break
                 print >> sys.stderr
@@ -1091,7 +1115,7 @@ def test_HLA_genotyping(reference_type,
                                         rank_i -= 1
                                     else:
                                         break
-                                print >> sys.stderr, "\t\t\t*** %d ranked %s (abundance: %.2f%%)" % (rank_i + 1, test_HLA_name, prob[1] * 100.0)
+                                print >> sys.stderr, "\t\t\t*** %d ranked %s (abundance:%.2f%%)" % (rank_i + 1, test_HLA_name, prob[1] * 100.0)
                                 if rank_i < len(success):
                                     success[rank_i] = True
                                 found_list[name_i] = True
@@ -1099,14 +1123,14 @@ def test_HLA_genotyping(reference_type,
                         if not False in found_list:
                             break
                     if not found:
-                        print >> sys.stderr, "\t\t\t\t%d ranked %s (abundance: %.2f%%)" % (prob_i + 1, prob[0], prob[1] * 100.0)
+                        print >> sys.stderr, "\t\t\t\t%d ranked %s (abundance:%.2f%%)" % (prob_i + 1, prob[0], prob[1] * 100.0)
                         if best_alleles and prob_i < 2:
-                            print >> sys.stdout, "SingleModel %s (abundance: %.2f%%)" % (prob[0], prob[1] * 100.0)
+                            print >> sys.stdout, "SingleModel %s (abundance:%.2f%%)" % (prob[0], prob[1] * 100.0)
                     if not simulation and prob_i >= 9:
                         break
                 print >> sys.stderr
 
-                if len(test_HLA_names) == 2 or not simulation:
+                if pair_model and (len(test_HLA_names) == 2 or not simulation):
                     HLA_prob, HLA_prob_next = {}, {}
                     for cmpt, count in HLA_cmpt.items():
                         alleles = cmpt.split('-')
@@ -1173,7 +1197,7 @@ def test_HLA_genotyping(reference_type,
                         allele_pair, prob = HLA_prob[prob_i]
                         allele1, allele2 = allele_pair.split('-')
                         if best_alleles and prob_i < 1:
-                            print >> sys.stdout, "PairModel %s (abundance: %.2f%%)" % (allele_pair, prob * 100.0)
+                            print >> sys.stdout, "PairModel %s (abundance:%.2f%%)" % (allele_pair, prob * 100.0)
                         if simulation:
                             if allele1 in test_HLA_names and allele2 in test_HLA_names:
                                 rank_i = prob_i
@@ -1182,11 +1206,11 @@ def test_HLA_genotyping(reference_type,
                                         rank_i -= 1
                                     else:
                                         break
-                                print >> sys.stderr, "\t\t\t*** %d ranked %s (abundance: %.2f%%)" % (rank_i + 1, allele_pair, prob * 100.0)
+                                print >> sys.stderr, "\t\t\t*** %d ranked %s (abundance:%.2f%%)" % (rank_i + 1, allele_pair, prob * 100.0)
                                 if rank_i == 0:
                                     success[0] = True
                                 break
-                        print >> sys.stderr, "\t\t\t\t%d ranked %s (abundance: %.2f%%)" % (prob_i + 1, allele_pair, prob * 100.0)
+                        print >> sys.stderr, "\t\t\t\t%d ranked %s (abundance:%.2f%%)" % (prob_i + 1, allele_pair, prob * 100.0)
                         if not simulation and prob_i >= 9:
                             break
                     print >> sys.stderr
@@ -1208,12 +1232,12 @@ def test_HLA_genotyping(reference_type,
                             score = float(score)
                             if simulation:
                                 if allele1 in test_HLA_names and allele2 in test_HLA_names:
-                                    print >> sys.stderr, "\t\t\t*** 1 ranked %s-%s (score: %.2f)" % (allele1, allele2, score)
+                                    print >> sys.stderr, "\t\t\t*** 1 ranked %s-%s (score:%.2f)" % (allele1, allele2, score)
                                     success[0] = True
                                 else:
                                     print >> sys.stderr, "\t\t\tLiModel fails"
                             if best_alleles:
-                                print >> sys.stdout, "LiModel %s-%s (score: %.2f)" % (allele1, allele2, score)
+                                print >> sys.stdout, "LiModel %s-%s (score:%.2f)" % (allele1, allele2, score)
                         li_hla_proc.communicate()
 
                 if simulation and not False in success:
@@ -1276,6 +1300,11 @@ if __name__ == '__main__':
                         type=int,
                         default=1,
                         help="Reads simulated at every these base pairs (default: 1)")
+    parser.add_argument("--sample",
+                        dest="sample",
+                        type=float,
+                        default=1.01,
+                        help="Reads sample rate (default: 1.01)")
     parser.add_argument("--coverage",
                         dest="coverage",
                         action='store_true',
@@ -1294,6 +1323,10 @@ if __name__ == '__main__':
                         type=int,
                         default=0,
                         help="Maximum number of mismatches per read alignment to be considered (default: 0)")
+    parser.add_argument('--no-pair-model',
+                        dest='pair_model',
+                        action='store_false',
+                        help='Disable pair models')
     parser.add_argument('-v', '--verbose',
                         dest='verbose',
                         action='store_true',
@@ -1342,9 +1375,11 @@ if __name__ == '__main__':
                         args.alignment_fname,
                         args.threads,
                         args.simulate_interval,
+                        args.sample,
                         args.coverage,
                         args.best_alleles,
                         args.exclude_allele_list,
                         args.num_mismatch,
+                        args.pair_model,
                         args.verbose,
                         daehwan_debug)
